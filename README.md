@@ -1,4 +1,4 @@
-# Radio Garden for Move Anything
+# Radio Garden for Move Everything
 
 Browse and stream live radio stations from around the world on Ableton Move, powered by [Radio Garden](https://radio.garden).
 
@@ -36,7 +36,7 @@ Or install via the **Module Store** on your Move.
 
 ## Requirements
 
-- Move Anything host v0.3.0+
+- Move Everything host v0.3.0+
 - Internet connection on Move (for API calls and radio streams)
 
 ## How It Works
@@ -48,3 +48,10 @@ Or install via the **Module Store** on your Move.
 ## License
 
 MIT
+
+## AI Assistance Disclaimer
+
+This module is part of Move Everything and was developed with AI assistance, including Claude, Codex, and other AI assistants.
+
+All architecture, implementation, and release decisions are reviewed by human maintainers.  
+AI-assisted content may still contain errors, so please validate functionality, security, and license compatibility before production use.
