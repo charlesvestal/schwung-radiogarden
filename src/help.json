@@ -1,0 +1,79 @@
+{
+  "title": "Radio Garden",
+  "children": [
+    {
+      "title": "Overview",
+      "lines": [
+        "Browse and stream",
+        "live radio stations",
+        "worldwide via",
+        "Radio Garden.",
+        "",
+        "Navigate by continent",
+        "country, and city to",
+        "find stations.",
+        "",
+        "Requires internet",
+        "connection."
+      ]
+    },
+    {
+      "title": "Controls",
+      "children": [
+        {
+          "title": "Navigation",
+          "lines": [
+            "Jog: scroll list",
+            "Jog Click: select",
+            "Back: go up one level",
+            "",
+            "Browse hierarchy:",
+            " Continent",
+            "  > Country",
+            "   > City",
+            "    > Station",
+            "",
+            "~970 cities indexed.",
+            "Stations fetched",
+            "live from Radio",
+            "Garden API."
+          ]
+        },
+        {
+          "title": "Playback",
+          "lines": [
+            "Knob 1: Play/Pause",
+            " Touch then turn R",
+            " to confirm.",
+            "",
+            "Knob 7: Stop",
+            " Touch then turn R",
+            " to confirm.",
+            "",
+            "Turn L on either",
+            "knob to cancel.",
+            "",
+            "Gain: 0-2x output",
+            "level (via menu)."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Tips",
+      "lines": [
+        "Navigation state is",
+        "saved between loads.",
+        "",
+        "Station list is",
+        "cached for quick",
+        "re-entry.",
+        "",
+        "Streams use MP3",
+        "via ffmpeg with a",
+        "30-second buffer",
+        "to prevent dropouts."
+      ]
+    }
+  ]
+}

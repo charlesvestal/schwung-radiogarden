@@ -33,6 +33,7 @@ echo "Compiling v2 DSP plugin..."
   -lpthread -lm
 
 cat src/module.json > dist/radiogarden/module.json
+[ -f src/help.json ] && cat src/help.json > dist/radiogarden/help.json
 cat src/ui.js > dist/radiogarden/ui.js
 cat src/ui_chain.js > dist/radiogarden/ui_chain.js
 cat build/module/dsp.so > dist/radiogarden/dsp.so
