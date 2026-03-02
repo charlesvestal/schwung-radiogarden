@@ -2,7 +2,7 @@
   "id": "radiogarden",
   "name": "Radio Garden",
   "abbrev": "RG",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browse and stream live radio stations worldwide via Radio Garden",
   "author": "charlesvestal",
   "license": "MIT",
@@ -22,14 +22,20 @@
         "key": "play_pause_step",
         "name": "Play/Pause",
         "type": "enum",
-        "options": ["idle", "trigger"],
+        "options": [
+          "idle",
+          "trigger"
+        ],
         "default": "idle"
       },
       {
         "key": "stop_step",
         "name": "Stop",
         "type": "enum",
-        "options": ["idle", "trigger"],
+        "options": [
+          "idle",
+          "trigger"
+        ],
         "default": "idle"
       },
       {
