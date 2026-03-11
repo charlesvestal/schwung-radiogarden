@@ -1026,6 +1026,7 @@ let pendingKnobAction = null;
 let fetchPhase = 'idle';     /* idle | draw_loading | searching | draw_channels | fetching | done | error */
 let fetchCityName = '';
 let fetchCountryName = '';
+let randomMode = false;      /* when true, auto-play a random station after fetch */
 
 /* Cached stations from last fetch */
 let stations = [];
@@ -1277,7 +1278,7 @@ function navigateBack() {
 function buildRootMenu() {
   const continents = unique(CITIES.map(c => c.continent));
   const items = [
-    createAction('[Back]', () => { saveNavState('', '', '', []); host_return_to_menu(); })
+    createAction('[Random]', () => playRandomStation())
   ].concat(continents.map(cont =>
     createAction(cont, () => openCountryMenu(cont))
   ));
@@ -1314,7 +1315,18 @@ function openCityMenu(continent, country) {
   needsRedraw = true;
 }
 
+function playRandomStation() {
+  const entry = CITIES[Math.floor(Math.random() * CITIES.length)];
+  randomMode = true;
+  fetchCityName = entry.city;
+  fetchCountryName = entry.country;
+  fetchPhase = 'draw_loading';
+  statusMessage = 'Random: ' + entry.city + '...';
+  needsRedraw = true;
+}
+
 function startFetchStations(cityName, countryName) {
+  randomMode = false;
   fetchCityName = cityName;
   fetchCountryName = countryName;
   fetchPhase = 'draw_loading';
@@ -1454,9 +1466,21 @@ globalThis.tick = function () {
     /* Blocking fetch happens here — UI already shows "Loading..." */
     doFetchStations();
     if (fetchPhase === 'done') {
-      openStationMenu();
+      if (randomMode) {
+        /* Pick a random station and play it immediately */
+        const st = stations[Math.floor(Math.random() * stations.length)];
+        playStation(st);
+        randomMode = false;
+      } else {
+        openStationMenu();
+      }
       fetchPhase = 'idle';
     } else {
+      if (randomMode) {
+        /* Fetch failed — try another random city next tick */
+        randomMode = false;
+        statusMessage = 'No stations, try again';
+      }
       fetchPhase = 'idle';
     }
     needsRedraw = true;

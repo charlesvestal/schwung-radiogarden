@@ -2,7 +2,7 @@
   "id": "radiogarden",
   "name": "Radio Garden",
   "abbrev": "RG",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Browse and stream live radio stations worldwide via Radio Garden",
   "author": "charlesvestal",
   "license": "MIT",
