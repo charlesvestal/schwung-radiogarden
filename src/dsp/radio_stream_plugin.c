@@ -24,7 +24,7 @@
 #define RING_SAMPLES       (MOVE_SAMPLE_RATE * 2 * RING_SECONDS)
 #define STREAM_URL_MAX     4096
 #define DEBOUNCE_MS        220ULL
-#define LOG_PATH           "/data/UserData/move-anything/cache/radiogarden-runtime.log"
+#define LOG_PATH           "/data/UserData/schwung/cache/radiogarden-runtime.log"
 
 /* ffmpeg search paths (tried in order) */
 #define FFMPEG_SYSTEM      "ffmpeg"
