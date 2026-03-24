@@ -6,14 +6,14 @@ import {
   MoveShift,
   MoveKnob1, MoveKnob7,
   MoveKnob1Touch, MoveKnob7Touch
-} from '/data/UserData/move-anything/shared/constants.mjs';
+} from '/data/UserData/schwung/shared/constants.mjs';
 
-import { isCapacitiveTouchMessage, decodeDelta } from '/data/UserData/move-anything/shared/input_filter.mjs';
+import { isCapacitiveTouchMessage, decodeDelta } from '/data/UserData/schwung/shared/input_filter.mjs';
 
-import { createAction } from '/data/UserData/move-anything/shared/menu_items.mjs';
-import { createMenuState, handleMenuInput } from '/data/UserData/move-anything/shared/menu_nav.mjs';
-import { createMenuStack } from '/data/UserData/move-anything/shared/menu_stack.mjs';
-import { drawStackMenu } from '/data/UserData/move-anything/shared/menu_render.mjs';
+import { createAction } from '/data/UserData/schwung/shared/menu_items.mjs';
+import { createMenuState, handleMenuInput } from '/data/UserData/schwung/shared/menu_nav.mjs';
+import { createMenuStack } from '/data/UserData/schwung/shared/menu_stack.mjs';
+import { drawStackMenu } from '/data/UserData/schwung/shared/menu_render.mjs';
 
 /* ── Radio Garden API ─────────────────────────────────────────────── */
 
