@@ -1282,6 +1282,9 @@ function buildRootMenu() {
   ].concat(continents.map(cont =>
     createAction(cont, () => openCountryMenu(cont))
   ));
+  if (typeof host_swap_module === 'function') {
+    items.push(createAction('[Swap module]', () => host_swap_module()));
+  }
   return { title: 'Radio Garden', items };
 }
 
@@ -1415,7 +1418,7 @@ globalThis.init = function () {
   spinnerFrame = 0;
   statusMessage = 'Select a city';
   streamStatus = 'stopped';
-  currentStationName = '';
+  currentStationName = host_module_get_param('station_name') || '';
   pendingKnobAction = null;
   fetchPhase = 'idle';
   fetchCityName = '';
