@@ -385,7 +385,7 @@ static int start_stream(radio_instance_t *inst) {
     snprintf(cmd, sizeof(cmd),
         "exec \"%s\" -hide_banner -loglevel error "
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-        "-user_agent \"Mozilla/5.0\" "
+        "-user_agent \"Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36\" "
         "-i \"%s\" -vn -sn -dn "
         "-af \"aresample=%d:async=1:min_hard_comp=0.100:first_pts=0\" "
         "-f s16le -ac 2 -ar %d pipe:1",
