@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "plugin_api_v1.h"
+#include "gain_state.h"
 
 #define RING_SECONDS       30
 #define RING_SAMPLES       (MOVE_SAMPLE_RATE * 2 * RING_SECONDS)
@@ -524,6 +525,16 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     radio_instance_t *inst = (radio_instance_t *)instance;
     if (!inst || !key || !val) return;
 
+    if (strcmp(key, "state") == 0) {
+        float gain;
+        if (gain_state_decode(val, &gain) == 0) {
+            char value[32];
+            snprintf(value, sizeof(value), "%.6f", gain);
+            v2_set_param(instance, "gain", value);
+        }
+        return;
+    }
+
     if (strcmp(key, "gain") == 0) {
         float g = (float)atof(val);
         if (g < 0.0f) g = 0.0f;
@@ -583,6 +594,11 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
 static int v2_get_param(void *instance, const char *key, char *buf, int buf_len) {
     radio_instance_t *inst = (radio_instance_t *)instance;
     if (!key || !buf || buf_len <= 0) return -1;
+
+    if (strcmp(key, "state") == 0) {
+        if (!inst) return -1;
+        return gain_state_encode(inst->gain, buf, buf_len);
+    }
 
     if (strcmp(key, "gain") == 0)
         return snprintf(buf, (size_t)buf_len, "%.2f", inst ? inst->gain : 1.0f);
