@@ -20,6 +20,7 @@
     "chain_params": [
       {
         "key": "play_pause_step",
+        "short_name": "Pause",
         "name": "Play/Pause",
         "type": "enum",
         "options": [
