@@ -52,17 +52,19 @@
         {
           "title": "Playback",
           "lines": [
-            "Page 2, Controls:",
             "Knob 1: Gain",
-            " (0-2x output)",
+            "  (0-2x output)",
             "Knob 2: Play/Pause",
             "Knob 3: Stop",
-            " Click to fire.",
             "",
-            "The bottom line of",
-            "the Browse page",
-            "shows what is",
-            "playing."
+            "The knobs work on",
+            "every page, and in",
+            "the chain editor.",
+            "Page 2 (Main) shows",
+            "them as a grid.",
+            "",
+            "The header shows",
+            "what is playing."
           ]
         }
       ]

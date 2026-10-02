@@ -1,13 +1,19 @@
 /*
  * browser.js — Radio Garden's station browser, as the module's FIRST PAGE.
  *
- * An `as_page` + `enterable` canvas (module.json): the page you land on shows
- * what is playing; click to enter and browse continent > country > city >
- * station; Back goes up a level and leaves at the top; Shift+jog always leaves.
- * The knobs live on the Controls page that follows.
+ * An `as_page` + `enterable` + `page_first` canvas (src/chain_params.json): the
+ * page you land on is the browse list; click to enter it, jog and click through
+ * continent > country > city > station, Back goes up a level and leaves at the
+ * top; Shift+jog always leaves. It carries the root level's knobs (Gain,
+ * Play/Pause, Stop), so they work here, in the chain editor and on the grid
+ * page that follows.
  *
- * What the host gives this page (see schwung docs/CANVAS_PAGES.md, and dr32's
- * resample.js, which this follows):
+ * It is drawn as the HOST'S OWN LIST -- same rows, highlight, scrollbar and
+ * brackets -- because anything else reads as a different widget. What is
+ * playing is the patch name the host already shows in the header.
+ *
+ * What the host gives this page (schwung docs/CANVAS_PAGES.md; dr32's
+ * resample.js is the other example):
  *   - un-entered, the jog pages past it and a click ENTERS. Entered, the jog
  *     and the click arrive here as CC 14 / CC 3, and Back asks handleBack
  *     (true = stay inside).
@@ -15,15 +21,12 @@
  *     inferred: any gesture that reaches onMidi proves it. A gap in draws means
  *     the page was off screen, and it resets to un-entered.
  *   - the host draws no brackets on a canvas page, so this draws them.
- *   - drawPage cannot read or write params. `station_name` / `stream_status`
- *     arrive as this page's extra_keys (info.values); a host that predates
- *     knobless-page reads leaves them empty, and the page falls back to what
- *     it last set itself.
- *   - there is no tick, so the station fetch runs in the BACKGROUND (wget to a
- *     file) and drawPage polls for it: the UI no longer freezes while a city
- *     loads. [Random] is the exception -- it has to set the stream once the
- *     fetch lands, and only a hook can set a param -- so it fetches in the
- *     click, as the old full-screen UI always did.
+ *   - drawPage cannot read or write params, and there is no tick. So a city's
+ *     stations load in the BACKGROUND (wget to a file) and drawPage polls for
+ *     them: the UI no longer freezes while they load. [Random] is the
+ *     exception -- it has to set the stream once the fetch lands, and only a
+ *     hook can set a param -- so it fetches in the click, as the old
+ *     full-screen UI always did.
  */
 
 import * as std from 'std';
@@ -1031,9 +1034,16 @@ const FETCH_TIMEOUT_MS = 20000;
 /* A page that has not been drawn for this long was not on screen. */
 const AWAY_MS = 250;
 
-/* The band: screen rows 9..53 (render_page_movy's first knob row), so y 0..44
- * here. Row pitch and highlight follow the host's list (menu_layout). */
-const ROW_H = 9, LIST_X = 9, HI_OFF = 1, VISIBLE_ROWS = 3;
+/*
+ * THE HOST'S LIST, exactly (list_geometry.mjs / menu_layout drawMenuList /
+ * drawScrollbar), shifted into this page's band, which starts at screen row 9:
+ * rows every 9px from screen y 10 (band y 1), labels at x 9 and 111px wide,
+ * the highlight full width from 1px above the text, 9 tall, and the dotted
+ * scrollbar track at x 126. Anything else reads as a different widget.
+ */
+const ROW_H = 9, LIST_X = 9, LIST_W = 111, LIST_Y = 1, HI_OFF = 1, VISIBLE_ROWS = 5;
+const ROW_INK = 7, TRACK_X = 126;
+
 const FRAME_X = 4, FRAME_Y = 0, FRAME_W = 120, FRAME_H = 45, ARM = 4;
 
 /* The host face's glyph widths, space to '~' (see dr32 resample.js). */
@@ -1224,7 +1234,7 @@ function stateOf(state) {
     state.lastDraw = -1;
     state.stack = [rootLevel()];
     state.fetch = null;          /* { phase, city, country, path, pid, startedMs } */
-    state.message = '';
+    state.note = null;           /* { level, row, text }: a failed fetch, on its row */
     state.stationName = '';      /* what this page last tuned, for an old host */
     state.city = '';
     restoreNav(state);
@@ -1280,16 +1290,17 @@ function play(ctx, state, station, city) {
   ctx.setParam('stream_url', station.streamUrl);
   state.stationName = station.title;
   state.city = city || state.city;
-  state.message = '';
+  state.note = null;
   saveNav(state);
 }
 
 function startCityFetch(state, city, country) {
   ensureCacheDir();
   const path = CACHE_DIR + '/search.json';
-  state.fetch = { phase: 'search', city, country, path,
+  const lvl = cur(state);
+  state.fetch = { phase: 'search', city, country, path, level: lvl, row: lvl.cursor,
                   pid: httpGetToFile(searchUrl(city, country), path), startedMs: Date.now() };
-  state.message = '';
+  state.note = null;
 }
 
 /* Synchronous, because it ends by setting the stream (see the header). */
@@ -1303,7 +1314,8 @@ function playRandom(ctx, state) {
     play(ctx, state, stations[Math.floor(Math.random() * stations.length)], e.city);
     return;
   }
-  state.message = 'No stations, try again';
+  const lvl = cur(state);
+  state.note = { level: lvl, row: lvl.cursor, text: 'no luck' };
 }
 
 function activate(ctx, state) {
@@ -1327,14 +1339,14 @@ function reap(pid) {
 function pollFetch(state, nowMs) {
   const f = state.fetch;
   if (!f) return;
-  const fail = (msg) => { reap(f.pid); state.fetch = null; state.message = msg; };
+  const fail = (msg) => { reap(f.pid); state.fetch = null; state.note = { level: f.level, row: f.row, text: msg }; };
   if (exists(f.path)) {
     reap(f.pid);
     let data = null;
     try { data = JSON.parse(readText(f.path) || ''); } catch (e) { data = null; }
     if (f.phase === 'search') {
       const placeId = placeIdFrom(data);
-      if (!placeId) { fail('City not found'); return; }
+      if (!placeId) { fail('not found'); return; }
       f.phase = 'channels';
       f.path = CACHE_DIR + '/channels.json';
       f.pid = httpGetToFile(channelsUrl(placeId), f.path);
@@ -1342,14 +1354,14 @@ function pollFetch(state, nowMs) {
       return;
     }
     const stations = stationsFrom(data);
-    if (!stations.length) { fail('No stations found'); return; }
+    if (!stations.length) { fail('no stations'); return; }
     state.fetch = null;
     state.stack.push(stationsLevel(f.city, stations));
     saveNav(state);
     return;
   }
-  if (exists(f.path + '.err')) { fail('Network error'); return; }
-  if (nowMs - f.startedMs > FETCH_TIMEOUT_MS) fail('Timed out');
+  if (exists(f.path + '.err')) { fail('offline'); return; }
+  if (nowMs - f.startedMs > FETCH_TIMEOUT_MS) fail('timed out');
 }
 
 /* ── drawing ──────────────────────────────────────────────────────── */
@@ -1370,52 +1382,46 @@ function drawBrackets(ctx) {
   }
 }
 
-/* The bottom line: what is loading, what went wrong, or what is playing --
- * the state as a one-glyph prefix, so a long station name cannot push it off. */
-function statusLine(state, values, nowMs) {
-  const spin = SPINNER[Math.floor(nowMs / 150) % SPINNER.length];
-  if (state.fetch) return spin + ' Loading ' + state.fetch.city;
-  if (state.message) return state.message;
-  const name = String(values.station_name || state.stationName || '').trim();
-  const status = values.stream_status || '';
-  if (!name || status === 'stopped') return 'Nothing playing';
-  if (status === 'buffering' || status === 'loading') return spin + ' ' + name;
-  if (status === 'paused') return '|| ' + name;
-  if (status === 'eof') return 'Ended: ' + name;
-  return '> ' + name;
+/* What the row under a fetch says while it loads, or after it failed. */
+function rowSuffix(state, lvl, r, nowMs) {
+  const f = state.fetch;
+  if (f && f.level === lvl && f.row === r)
+    return SPINNER[Math.floor(nowMs / 150) % SPINNER.length];
+  if (state.note && state.note.level === lvl && state.note.row === r) return state.note.text;
+  return '';
 }
 
 /*
  * ONE picture for both states, so entering is visible.
  *
  * The click that enters this door is the host's and nothing reports it, so
- * "entered" is only known at the NEXT gesture. A page that drew something else
- * until then would look like the click did nothing. So un-entered and entered
- * are the same list -- the level's title, three rows, a scrollbar, and what is
- * playing on the bottom line -- and differ the way the host's own list doors
- * do: brackets un-entered, the row highlight entered.
+ * "entered" is only known at the NEXT gesture. So un-entered and entered are
+ * the same list and differ the way the host's own list doors do: brackets
+ * un-entered, the row highlight entered.
  */
-function drawPageBody(ctx, state, values, nowMs) {
+function drawPageBody(ctx, state, nowMs) {
   const lvl = cur(state);
-  ctx.print(LIST_X, 0, fit(lvl.title, 110), 1);
-  ctx.fillRect(LIST_X, 8, 110, 1, 1);
+  const n = lvl.rows.length;
   for (let i = 0; i < VISIBLE_ROWS; i++) {
     const r = lvl.top + i;
-    if (r >= lvl.rows.length) break;
-    const y = 10 + i * ROW_H;
+    if (r >= n) break;
+    const y = LIST_Y + i * ROW_H;
     const on = state.entered && r === lvl.cursor;
-    if (on) ctx.fillRect(LIST_X - 3, y - HI_OFF, 112, ROW_H, 1);
-    ctx.print(LIST_X, y, fit(lvl.rows[r].label, 104), on ? 0 : 1);
+    if (on) ctx.fillRect(0, y - HI_OFF, 128, ROW_H, 1);
+    const suffix = rowSuffix(state, lvl, r, nowMs);
+    const label = suffix ? fit(lvl.rows[r].label, LIST_W - textW(' ' + suffix)) + ' ' + suffix
+                         : fit(lvl.rows[r].label, LIST_W);
+    ctx.print(LIST_X, y, label, on ? 0 : 1);
   }
-  if (lvl.rows.length > VISIBLE_ROWS) {
-    const trackH = VISIBLE_ROWS * ROW_H;
-    const thumbH = Math.max(3, Math.floor(trackH * VISIBLE_ROWS / lvl.rows.length));
-    const span = lvl.rows.length - VISIBLE_ROWS;
-    const thumbY = 9 + Math.floor((trackH - thumbH) * lvl.top / span);
-    ctx.fillRect(120, thumbY, 1, thumbH, 1);
+  if (lvl.top > 0 || lvl.top + VISIBLE_ROWS < n) {
+    const trackBottom = LIST_Y + (VISIBLE_ROWS - 1) * ROW_H + ROW_INK;
+    const trackH = trackBottom - LIST_Y;
+    for (let y = LIST_Y; y < trackBottom; y += 2) ctx.fillRect(TRACK_X, y, 1, 1, 1);
+    const thumbH = Math.max(2, Math.round((VISIBLE_ROWS / n) * trackH));
+    const maxStart = n - VISIBLE_ROWS;
+    const ty = LIST_Y + (maxStart > 0 ? Math.round((lvl.top / maxStart) * (trackH - thumbH)) : 0);
+    ctx.fillRect(TRACK_X, ty, 1, thumbH, 1);
   }
-  ctx.fillRect(LIST_X, 36, 110, 1, 1);
-  ctx.print(LIST_X, 37, fit(statusLine(state, values, nowMs), 110), 1);
   if (!state.entered) drawBrackets(ctx);
 }
 
@@ -1429,7 +1435,7 @@ globalThis.canvas_overlay = {
     /* Only an ENTERED door is handed gestures: this one proves it. */
     const wasEntered = state.entered;
     state.entered = true;
-    state.message = '';
+    state.note = null;
     if (d[1] === CC_JOG) {
       const v = d[2];
       const delta = v === 0 ? 0 : (v <= 63 ? v : -(128 - v));
@@ -1449,7 +1455,7 @@ globalThis.canvas_overlay = {
     if (state.fetch) { reap(state.fetch.pid); state.fetch = null; return true; }
     if (state.stack.length > 1) {
       state.stack.pop();
-      state.message = '';
+      state.note = null;
       saveNav(state);
       return true;
     }
@@ -1463,6 +1469,6 @@ globalThis.canvas_overlay = {
     if (state.lastDraw < 0 || nowMs - state.lastDraw > AWAY_MS) state.entered = false;
     state.lastDraw = nowMs;
     pollFetch(state, nowMs);
-    drawPageBody(ctx, state, info.values || {}, nowMs);
+    drawPageBody(ctx, state, nowMs);
   },
 };

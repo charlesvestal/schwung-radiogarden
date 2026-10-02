@@ -7,10 +7,7 @@
     "as_page": true,
     "enterable": true,
     "show_value": false,
-    "extra_keys": [
-      "station_name",
-      "stream_status"
-    ]
+    "page_first": true
   },
   {
     "key": "gain",

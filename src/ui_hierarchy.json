@@ -2,33 +2,13 @@
   "levels": {
     "root": {
       "name": "Radio Garden",
-      "knobs": [],
-      "params": [
-        {
-          "level": "radio",
-          "label": "Radio"
-        },
-        {
-          "level": "controls",
-          "label": "Controls"
-        }
-      ]
-    },
-    "radio": {
-      "name": "Radio",
-      "params": [
-        "browse"
-      ],
-      "knobs": []
-    },
-    "controls": {
-      "name": "Controls",
-      "params": [
+      "knobs": [
         "gain",
         "play_pause_step",
         "stop_step"
       ],
-      "knobs": [
+      "params": [
+        "browse",
         "gain",
         "play_pause_step",
         "stop_step"

@@ -23,8 +23,10 @@ if (!b || b.type !== "canvas" || b.as_page !== true || b.enterable !== true)
   fail("browse must be an as_page, enterable canvas");
 if (!fs.existsSync("src/" + (b && b.canvas_script))) fail("canvas_script does not exist in src/");
 const root = h.levels.root;
-if (!root || !root.params || !root.params[0] || root.params[0].level !== "radio")
-  fail("the browser level must be the FIRST page");
+if (!root || !root.params || root.params[0] !== "browse" || !(b && b.page_first === true))
+  fail("browse must be the first param of root and page_first, so it is the FIRST page");
+if (!root || !Array.isArray(root.knobs) || !root.knobs.length)
+  fail("root must declare knobs: they are what the chain editor maps, and what the Browse page carries");
 if (fails) process.exit(1);
 console.log("PASS: ui contract");
 '
