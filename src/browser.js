@@ -1,27 +1,33 @@
+/*
+ * browser.js — Radio Garden's station browser, as the module's FIRST PAGE.
+ *
+ * An `as_page` + `enterable` canvas (module.json): the page you land on shows
+ * what is playing; click to enter and browse continent > country > city >
+ * station; Back goes up a level and leaves at the top; Shift+jog always leaves.
+ * The knobs live on the Controls page that follows.
+ *
+ * What the host gives this page (see schwung docs/CANVAS_PAGES.md, and dr32's
+ * resample.js, which this follows):
+ *   - un-entered, the jog pages past it and a click ENTERS. Entered, the jog
+ *     and the click arrive here as CC 14 / CC 3, and Back asks handleBack
+ *     (true = stay inside).
+ *   - the ENTERING click is the host's and nothing reports it, so "entered" is
+ *     inferred: any gesture that reaches onMidi proves it. A gap in draws means
+ *     the page was off screen, and it resets to un-entered.
+ *   - the host draws no brackets on a canvas page, so this draws them.
+ *   - drawPage cannot read or write params. `station_name` / `stream_status`
+ *     arrive as this page's extra_keys (info.values); a host that predates
+ *     knobless-page reads leaves them empty, and the page falls back to what
+ *     it last set itself.
+ *   - there is no tick, so the station fetch runs in the BACKGROUND (wget to a
+ *     file) and drawPage polls for it: the UI no longer freezes while a city
+ *     loads. [Random] is the exception -- it has to set the stream once the
+ *     fetch lands, and only a hook can set a param -- so it fetches in the
+ *     click, as the old full-screen UI always did.
+ */
+
 import * as std from 'std';
 import * as os from 'os';
-
-import {
-  MidiNoteOn,
-  MoveShift,
-  MoveKnob1, MoveKnob7,
-  MoveKnob1Touch, MoveKnob7Touch
-} from '/data/UserData/schwung/shared/constants.mjs';
-
-import { isCapacitiveTouchMessage, decodeDelta } from '/data/UserData/schwung/shared/input_filter.mjs';
-
-import { createAction } from '/data/UserData/schwung/shared/menu_items.mjs';
-import { createMenuState, handleMenuInput } from '/data/UserData/schwung/shared/menu_nav.mjs';
-import { createMenuStack } from '/data/UserData/schwung/shared/menu_stack.mjs';
-import { drawStackMenu } from '/data/UserData/schwung/shared/menu_render.mjs';
-
-/* ── Radio Garden API ─────────────────────────────────────────────── */
-
-const RG_API = 'https://radio.garden/api';
-const SPINNER = ['-', '/', '|', '\\'];
-
-/* ── City Database ────────────────────────────────────────────────── */
-/* ~970 cities organized by continent and country */
 
 const CITIES = [
   /* -- Africa ------------------------------------------------------ */
@@ -1008,75 +1014,87 @@ const CITIES = [
   { continent: 'Oceania', country: 'Vanuatu', city: 'Port Vila' },
 ];
 
-/* ── state ────────────────────────────────────────────────────────── */
+/* ── constants ────────────────────────────────────────────────────── */
 
-let menuState = createMenuState();
-let menuStack = createMenuStack();
-let shiftHeld = false;
-let needsRedraw = true;
-let tickCounter = 0;
-let spinnerTick = 0;
-let spinnerFrame = 0;
-let statusMessage = 'Select a city';
-let streamStatus = 'stopped';
-let currentStationName = '';
-let pendingKnobAction = null;
+const CC_JOG = 14;
+const CC_CLICK = 3;
 
-/* Async fetch state machine */
-let fetchPhase = 'idle';     /* idle | draw_loading | searching | draw_channels | fetching | done | error */
-let fetchCityName = '';
-let fetchCountryName = '';
-let randomMode = false;      /* when true, auto-play a random station after fetch */
+const RG_API = 'https://radio.garden/api';
+const UA = 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36';
+const SPINNER = ['-', '/', '|', '\\'];
 
-/* Cached stations from last fetch */
-let stations = [];
+/* Never /tmp on the device: the root filesystem is usually full. */
+const CACHE_DIR = '/data/UserData/schwung/cache/radiogarden';
+const NAV_PATH = CACHE_DIR + '/nav.json';
+const FETCH_TIMEOUT_MS = 20000;
 
-/* ── helpers ──────────────────────────────────────────────────────── */
+/* A page that has not been drawn for this long was not on screen. */
+const AWAY_MS = 250;
 
-function cleanLabel(text, maxLen) {
-  maxLen = maxLen || 22;
-  let s = String(text || '');
-  s = s.replace(/[^\x20-\x7E]+/g, ' ').replace(/\s+/g, ' ').trim();
+/* The band: screen rows 9..53 (render_page_movy's first knob row), so y 0..44
+ * here. Row pitch and highlight follow the host's list (menu_layout). */
+const ROW_H = 9, LIST_X = 9, HI_OFF = 1, VISIBLE_ROWS = 3;
+const FRAME_X = 4, FRAME_Y = 0, FRAME_W = 120, FRAME_H = 45, ARM = 4;
+
+/* The host face's glyph widths, space to '~' (see dr32 resample.js). */
+const GLYPH_W = '51355552335525255355555555224545555555555355555555555555555353553554555553443555555555555553135';
+function textW(t) {
+  const s = String(t);
+  let w = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    w += (c >= 32 && c <= 126 ? Number(GLYPH_W[c - 32]) : 5) + 1;
+  }
+  return w > 0 ? w - 1 : 0;
+}
+
+/* ASCII only (the face has nothing else), squeezed to fit `maxW` pixels. */
+function fit(text, maxW) {
+  let s = String(text || '').replace(/[^\x20-\x7E]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s) s = '(untitled)';
-  if (s.length > maxLen) s = s.slice(0, Math.max(0, maxLen - 1)) + '\u2026';
-  return s;
+  if (textW(s) <= maxW) return s;
+  while (s.length > 1 && textW(s + '..') > maxW) s = s.slice(0, -1);
+  return s + '..';
 }
 
 function unique(arr) {
-  const seen = {};
   const out = [];
-  for (const item of arr) {
-    if (!seen[item]) {
-      seen[item] = true;
-      out.push(item);
-    }
-  }
+  for (const x of arr) if (out.indexOf(x) < 0) out.push(x);
   return out;
 }
 
-function currentActivityLabel() {
-  if (fetchPhase === 'draw_loading' || fetchPhase === 'searching' ||
-      fetchPhase === 'draw_channels' || fetchPhase === 'fetching')
-    return 'Loading';
-  if (streamStatus === 'loading') return 'Loading';
-  if (streamStatus === 'buffering') return 'Buffering';
-  return '';
+/* ── files and the network ────────────────────────────────────────── */
+
+function ensureCacheDir() {
+  try { os.mkdir('/data/UserData/schwung/cache'); } catch (e) {}
+  try { os.mkdir(CACHE_DIR); } catch (e) {}
 }
 
-function currentFooter() {
-  const activity = currentActivityLabel();
-  if (activity) return activity + ' ' + SPINNER[spinnerFrame];
-  if (streamStatus === 'streaming' && currentStationName)
-    return 'Playing: ' + cleanLabel(currentStationName, 18);
-  if (streamStatus === 'paused') return 'Paused';
-  if (statusMessage) return statusMessage;
-  return 'Jog:browse Click:select';
+function readText(path) {
+  try {
+    const f = std.open(path, 'r');
+    if (!f) return null;
+    const s = f.readAsString();
+    f.close();
+    return s;
+  } catch (e) { return null; }
 }
 
-/* ── Radio Garden API helpers ─────────────────────────────────────── */
+function writeText(path, text) {
+  try {
+    const f = std.open(path, 'w');
+    if (!f) return;
+    f.puts(text);
+    f.close();
+  } catch (e) {}
+}
+
+function exists(path) {
+  try { const r = os.stat(path); return Array.isArray(r) && r[1] === 0; }
+  catch (e) { return false; }
+}
 
 function urlEncode(str) {
-  /* Minimal percent-encoding for query strings */
   let out = '';
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
@@ -1094,491 +1112,357 @@ function urlEncode(str) {
   return out;
 }
 
+function searchUrl(city, country) {
+  return RG_API + '/search?q=' + urlEncode(city + ' ' + country);
+}
+function channelsUrl(placeId) {
+  return RG_API + '/ara/content/page/' + placeId + '/channels';
+}
+
+/* Blocking GET (wget with a browser UA, which Cloudflare lets through). */
 function httpGetJson(url) {
-  /* Use wget with a browser User-Agent to bypass Cloudflare.
-   * std.popen runs wget synchronously and reads stdout. */
-  const UA = 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36';
-  const cmd = 'wget -U "' + UA + '" -q -O - "' + url + '"';
   let f;
   try {
-    f = std.popen(cmd, 'r');
+    f = std.popen('wget -U "' + UA + '" -q -T 10 -O - "' + url + '"', 'r');
     if (!f) return null;
-    let raw = '';
-    let chunk;
-    while ((chunk = f.readAsString(4096)) !== null && chunk.length > 0)
-      raw += chunk;
+    const raw = f.readAsString();
     f.close();
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return raw ? JSON.parse(raw) : null;
   } catch (e) {
     if (f) try { f.close(); } catch (_) {}
     return null;
   }
 }
 
-/* ── Station fetching (two-phase: search → channels) ──────────────── */
+/* Background GET into `path`. Done when `path` exists; failed when
+ * `path + '.err'` does. Returns the child's pid (reaped by pollFetch). */
+function httpGetToFile(url, path) {
+  try { os.remove(path); } catch (e) {}
+  try { os.remove(path + '.err'); } catch (e) {}
+  try { os.remove(path + '.part'); } catch (e) {}
+  const cmd = 'wget -U "' + UA + '" -q -T 10 -O "' + path + '.part" "' + url + '"' +
+              ' && mv "' + path + '.part" "' + path + '"' +
+              ' || echo fail > "' + path + '.err"';
+  try { return os.exec(['/bin/sh', '-c', cmd], { block: false }); }
+  catch (e) { writeText(path + '.err', 'fail'); return -1; }
+}
 
-function searchForCity(cityName, countryName) {
-  /* Search Radio Garden for the city to find its place ID.
-   * API response format:
-   *   { hits: { hits: [{ _source: { type: "place", page: { url: "/visit/berlin/6lcXHtKK" } } }] } }
-   */
-  const query = cityName + ' ' + countryName;
-  const url = RG_API + '/search?q=' + urlEncode(query);
-
-  const data = httpGetJson(url);
-  if (!data) return null;
-
-  const hits = data.hits && data.hits.hits;
+/* Radio Garden's search answer -> a place id (see the API notes in git
+ * history: page.url "/visit/<slug>/<id>", or a channel hit's page.place.id). */
+function placeIdFrom(data) {
+  const hits = data && data.hits && data.hits.hits;
   if (!Array.isArray(hits)) return null;
-
-  /* Look for place type hits — extract place ID from page.url */
   for (const hit of hits) {
     const src = hit._source || hit;
     if (src.type === 'place') {
-      const pageUrl = (src.page && src.page.url) || '';
-      const parts = pageUrl.split('/');
-      const placeId = parts[parts.length - 1];
-      if (placeId && placeId.length > 2) return placeId;
+      const parts = ((src.page && src.page.url) || '').split('/');
+      const id = parts[parts.length - 1];
+      if (id && id.length > 2) return id;
     }
   }
-
-  /* Fallback: extract place ID from a channel hit's page.place.id */
   for (const hit of hits) {
     const src = hit._source || hit;
     if (src.type === 'channel' && src.page && src.page.place && src.page.place.id)
       return src.page.place.id;
   }
-
   return null;
 }
 
-function fetchChannelsForPlace(placeId) {
-  /* API response format:
-   *   { data: { content: [{ items: [{ page: { url: "/listen/slug/channelId", title: "Name" } }] }] } }
-   */
-  const url = RG_API + '/ara/content/page/' + placeId + '/channels';
-
-  const data = httpGetJson(url);
-  if (!data) return [];
-
-  const result = [];
-  const content = (data.data && data.data.content) || [];
-
+/* A place's channels answer -> [{ title, streamUrl }]. */
+function stationsFrom(data) {
+  const out = [];
+  const content = (data && data.data && data.data.content) || [];
   for (const section of content) {
-    const items = section.items || [];
-    for (const item of items) {
+    for (const item of (section.items || [])) {
       const page = item.page || {};
-      const pageUrl = page.url || '';
-      const title = page.title || '(Unknown Station)';
-
-      /* Extract channel ID: last segment of /listen/{slug}/{channelId} */
-      const parts = pageUrl.split('/');
-      const channelId = parts.length >= 3 ? parts[parts.length - 1] : null;
-      if (channelId) {
-        result.push({
-          id: channelId,
-          title: title,
-          streamUrl: RG_API + '/ara/content/listen/' + channelId + '/channel.mp3'
-        });
-      }
+      const parts = (page.url || '').split('/');
+      const id = parts.length >= 3 ? parts[parts.length - 1] : null;
+      if (!id) continue;
+      out.push({
+        title: page.title || '(Unknown Station)',
+        streamUrl: RG_API + '/ara/content/listen/' + id + '/channel.mp3',
+      });
     }
   }
-
-  return result;
+  return out;
 }
 
-function doFetchStations() {
-  /* Phase 1: search for city to get placeId */
-  const placeId = searchForCity(fetchCityName, fetchCountryName);
-  if (!placeId) {
-    statusMessage = 'City not found';
-    fetchPhase = 'error';
+/* ── the browse tree ──────────────────────────────────────────────── */
+
+/* A level is { title, rows: [{ label, act }], cursor, top }. `act` names what
+ * a click does, as data, so the stack can be saved and rebuilt. */
+function rootLevel() {
+  const rows = [{ label: '[Random]', act: { kind: 'random' } }];
+  for (const c of unique(CITIES.map((e) => e.continent)))
+    rows.push({ label: c, act: { kind: 'continent', continent: c } });
+  return { title: 'Radio Garden', rows, cursor: 0, top: 0 };
+}
+
+function continentLevel(continent) {
+  const rows = unique(CITIES.filter((e) => e.continent === continent).map((e) => e.country))
+    .map((country) => ({ label: country, act: { kind: 'country', continent, country } }));
+  return { title: continent, rows, cursor: 0, top: 0 };
+}
+
+function countryLevel(continent, country) {
+  const rows = CITIES.filter((e) => e.continent === continent && e.country === country)
+    .map((e) => ({ label: e.city, act: { kind: 'city', city: e.city, country } }));
+  return { title: country, rows, cursor: 0, top: 0 };
+}
+
+function stationsLevel(city, stations) {
+  const rows = stations.map((st) => ({ label: st.title, act: { kind: 'station', station: st } }));
+  return { title: city, rows, cursor: 0, top: 0, city };
+}
+
+/* ── state (per slot: the host hands the same object to hooks and draw) ── */
+
+function stateOf(state) {
+  if (!state.ready) {
+    state.ready = true;
+    state.entered = false;
+    state.lastDraw = -1;
+    state.stack = [rootLevel()];
+    state.fetch = null;          /* { phase, city, country, path, pid, startedMs } */
+    state.message = '';
+    state.stationName = '';      /* what this page last tuned, for an old host */
+    state.city = '';
+    restoreNav(state);
+  }
+  return state;
+}
+
+function cur(state) { return state.stack[state.stack.length - 1]; }
+
+/* Where you were, so the browser reopens there. Station lists are cached with
+ * it so coming back does not refetch. */
+function saveNav(state) {
+  ensureCacheDir();
+  const path = [];
+  for (const lvl of state.stack.slice(1)) {
+    if (lvl.city) path.push({ city: lvl.city, stations: lvl.rows.map((r) => r.act.station) });
+    else path.push({ title: lvl.title });
+  }
+  writeText(NAV_PATH, JSON.stringify({ path, stationName: state.stationName, city: state.city }));
+}
+
+function restoreNav(state) {
+  const raw = readText(NAV_PATH);
+  if (!raw) return;
+  let nav;
+  try { nav = JSON.parse(raw); } catch (e) { return; }
+  if (!nav || !Array.isArray(nav.path)) return;
+  state.stationName = nav.stationName || '';
+  state.city = nav.city || '';
+  const p = nav.path;
+  if (p[0] && p[0].title && CITIES.some((e) => e.continent === p[0].title)) {
+    state.stack.push(continentLevel(p[0].title));
+    if (p[1] && p[1].title && CITIES.some((e) => e.continent === p[0].title && e.country === p[1].title)) {
+      state.stack.push(countryLevel(p[0].title, p[1].title));
+      if (p[2] && p[2].city && Array.isArray(p[2].stations) && p[2].stations.length)
+        state.stack.push(stationsLevel(p[2].city, p[2].stations.filter(Boolean)));
+    }
+  }
+}
+
+function move(lvl, delta) {
+  const n = lvl.rows.length;
+  if (!n) return;
+  lvl.cursor = Math.max(0, Math.min(n - 1, lvl.cursor + (delta > 0 ? 1 : -1)));
+  if (lvl.cursor < lvl.top) lvl.top = lvl.cursor;
+  if (lvl.cursor >= lvl.top + VISIBLE_ROWS) lvl.top = lvl.cursor - VISIBLE_ROWS + 1;
+}
+
+/* ── actions (hooks only: they may set params) ────────────────────── */
+
+function play(ctx, state, station, city) {
+  ctx.setParam('station_name', station.title);
+  ctx.setParam('stream_url', station.streamUrl);
+  state.stationName = station.title;
+  state.city = city || state.city;
+  state.message = '';
+  saveNav(state);
+}
+
+function startCityFetch(state, city, country) {
+  ensureCacheDir();
+  const path = CACHE_DIR + '/search.json';
+  state.fetch = { phase: 'search', city, country, path,
+                  pid: httpGetToFile(searchUrl(city, country), path), startedMs: Date.now() };
+  state.message = '';
+}
+
+/* Synchronous, because it ends by setting the stream (see the header). */
+function playRandom(ctx, state) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const e = CITIES[Math.floor(Math.random() * CITIES.length)];
+    const placeId = placeIdFrom(httpGetJson(searchUrl(e.city, e.country)));
+    if (!placeId) continue;
+    const stations = stationsFrom(httpGetJson(channelsUrl(placeId)));
+    if (!stations.length) continue;
+    play(ctx, state, stations[Math.floor(Math.random() * stations.length)], e.city);
     return;
   }
-
-  /* Phase 2: fetch channels for the place */
-  stations = fetchChannelsForPlace(placeId);
-  if (stations.length === 0) {
-    statusMessage = 'No stations found';
-    fetchPhase = 'error';
-    return;
-  }
-
-  fetchPhase = 'done';
-  statusMessage = stations.length + ' stations';
+  state.message = 'No stations, try again';
 }
 
-/* ── nav state persistence ────────────────────────────────────────── */
-
-const NAV_STATE_PATH = '/tmp/radiogarden_nav.json';
-
-function saveNavState(continent, country, cityName, stationList) {
-  try {
-    const f = std.open(NAV_STATE_PATH, 'w');
-    if (f) {
-      f.puts(JSON.stringify({
-        continent: continent || '',
-        country: country || '',
-        city: cityName || '',
-        stations: stationList || []
-      }));
-      f.close();
-    }
-  } catch (e) {}
+function activate(ctx, state) {
+  const lvl = cur(state);
+  const row = lvl.rows[lvl.cursor];
+  if (!row || state.fetch) return;
+  const a = row.act;
+  if (a.kind === 'random') playRandom(ctx, state);
+  else if (a.kind === 'continent') { state.stack.push(continentLevel(a.continent)); saveNav(state); }
+  else if (a.kind === 'country') { state.stack.push(countryLevel(a.continent, a.country)); saveNav(state); }
+  else if (a.kind === 'city') startCityFetch(state, a.city, a.country);
+  else if (a.kind === 'station') play(ctx, state, a.station, lvl.city);
 }
 
-function loadNavState() {
-  try {
-    const f = std.open(NAV_STATE_PATH, 'r');
-    if (!f) return null;
-    let raw = '';
-    let chunk;
-    while ((chunk = f.readAsString(1024)) !== null && chunk.length > 0)
-      raw += chunk;
-    f.close();
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (e) {
-    return null;
-  }
+/* ── the background fetch, advanced from the draw ─────────────────── */
+
+function reap(pid) {
+  if (pid > 0) { try { os.waitpid(pid, os.WNOHANG); } catch (e) {} }
 }
 
-function navigateBack() {
-  if (menuStack.depth() <= 1) {
-    saveNavState('', '', '', []);
-    host_return_to_menu();
-  } else {
-    menuStack.pop();
-    const prev = menuStack.current();
-    if (prev && typeof prev.selectedIndex === 'number') {
-      menuState.selectedIndex = prev.selectedIndex;
-    } else {
-      menuState.selectedIndex = 0;
-    }
-    /* Re-save nav state for the level we landed on.
-     * Stack titles: depth 1 = "Radio Garden", depth 2 = continent, depth 3 = country */
-    const depth = menuStack.depth();
-    if (depth <= 1) {
-      saveNavState('', '', '', []);
-    } else if (depth === 2) {
-      saveNavState(prev.title, '', '', []);
-    } else if (depth === 3) {
-      /* At city list — continent is the second title in the path */
-      const path = menuStack.getPath();
-      const continent = path.length >= 2 ? path[1] : '';
-      saveNavState(continent, prev.title, '', []);
-    }
-    needsRedraw = true;
-  }
-}
-
-/* ── menu building ────────────────────────────────────────────────── */
-
-function buildRootMenu() {
-  const continents = unique(CITIES.map(c => c.continent));
-  const items = [
-    createAction('[Random]', () => playRandomStation())
-  ].concat(continents.map(cont =>
-    createAction(cont, () => openCountryMenu(cont))
-  ));
-  if (typeof host_swap_module === 'function') {
-    items.push(createAction('[Swap module]', () => host_swap_module()));
-  }
-  return { title: 'Radio Garden', items };
-}
-
-function openCountryMenu(continent) {
-  const countries = unique(
-    CITIES.filter(c => c.continent === continent).map(c => c.country)
-  );
-  const items = [
-    createAction('[Back]', () => navigateBack())
-  ].concat(countries.map(country =>
-    createAction(country, () => openCityMenu(continent, country))
-  ));
-  menuStack.push({ title: continent, items, selectedIndex: 0 });
-  menuState.selectedIndex = 0;
-  saveNavState(continent, '');
-  needsRedraw = true;
-}
-
-function openCityMenu(continent, country) {
-  const cities = CITIES.filter(
-    c => c.continent === continent && c.country === country
-  );
-  const items = [
-    createAction('[Back]', () => navigateBack())
-  ].concat(cities.map(entry =>
-    createAction(entry.city, () => startFetchStations(entry.city, entry.country))
-  ));
-  menuStack.push({ title: country, items, selectedIndex: 0 });
-  menuState.selectedIndex = 0;
-  saveNavState(continent, country);
-  needsRedraw = true;
-}
-
-function playRandomStation() {
-  const entry = CITIES[Math.floor(Math.random() * CITIES.length)];
-  randomMode = true;
-  fetchCityName = entry.city;
-  fetchCountryName = entry.country;
-  fetchPhase = 'draw_loading';
-  statusMessage = 'Random: ' + entry.city + '...';
-  needsRedraw = true;
-}
-
-function startFetchStations(cityName, countryName) {
-  randomMode = false;
-  fetchCityName = cityName;
-  fetchCountryName = countryName;
-  fetchPhase = 'draw_loading';
-  statusMessage = 'Loading ' + cityName + '...';
-  needsRedraw = true;
-}
-
-function openStationMenu() {
-  const items = [
-    createAction('[Back]', () => navigateBack())
-  ].concat(stations.map(st =>
-    createAction(cleanLabel(st.title), () => playStation(st))
-  ));
-  menuStack.push({
-    title: fetchCityName + ' Radio',
-    items,
-    selectedIndex: 0
-  });
-  menuState.selectedIndex = 0;
-  /* Save full nav path including cached stations */
-  const cityEntry = CITIES.find(
-    c => c.city === fetchCityName && c.country === fetchCountryName
-  );
-  saveNavState(
-    cityEntry ? cityEntry.continent : '',
-    fetchCountryName,
-    fetchCityName,
-    stations
-  );
-  needsRedraw = true;
-}
-
-function playStation(station) {
-  currentStationName = station.title;
-  host_module_set_param('station_name', station.title);
-  host_module_set_param('stream_url', station.streamUrl);
-  statusMessage = 'Loading...';
-  needsRedraw = true;
-}
-
-/* ── knob actions (play/pause on knob 1, stop on knob 7) ─────────── */
-
-function setPendingKnobAction(cc, action, prompt) {
-  pendingKnobAction = { cc, action };
-  statusMessage = prompt;
-  needsRedraw = true;
-}
-
-function runKnobAction(action) {
-  if (action === 'play_pause') {
-    host_module_set_param('play_pause_step', 'trigger');
-    statusMessage = streamStatus === 'paused' ? 'Resuming...' : 'Pausing...';
-  } else if (action === 'stop') {
-    host_module_set_param('stop_step', 'trigger');
-    statusMessage = 'Stopping...';
-    currentStationName = '';
-  }
-  needsRedraw = true;
-}
-
-/* ── refresh stream status ────────────────────────────────────────── */
-
-function refreshState() {
-  const prev = streamStatus;
-  streamStatus = host_module_get_param('stream_status') || 'stopped';
-  if (prev !== streamStatus) {
-    if (streamStatus === 'loading') statusMessage = 'Loading stream...';
-    else if (streamStatus === 'buffering') statusMessage = 'Buffering...';
-    else if (streamStatus === 'paused') statusMessage = 'Paused';
-    else if (streamStatus === 'streaming') statusMessage = 'Playing';
-    else if (streamStatus === 'eof') statusMessage = 'Stream ended';
-    else if (streamStatus === 'stopped') statusMessage = 'Stopped';
-    needsRedraw = true;
-  }
-}
-
-/* ── lifecycle ────────────────────────────────────────────────────── */
-
-globalThis.init = function () {
-  menuState = createMenuState();
-  menuStack = createMenuStack();
-  shiftHeld = false;
-  needsRedraw = true;
-  tickCounter = 0;
-  spinnerTick = 0;
-  spinnerFrame = 0;
-  statusMessage = 'Select a city';
-  streamStatus = 'stopped';
-  currentStationName = host_module_get_param('station_name') || '';
-  pendingKnobAction = null;
-  fetchPhase = 'idle';
-  fetchCityName = '';
-  fetchCountryName = '';
-  stations = [];
-
-  /* Build root menu: continent list */
-  const root = buildRootMenu();
-  menuStack.push({ title: root.title, items: root.items, selectedIndex: 0 });
-  menuState.selectedIndex = 0;
-
-  /* Restore saved navigation state */
-  const saved = loadNavState();
-  if (saved && saved.continent) {
-    openCountryMenu(saved.continent);
-    if (saved.country) {
-      openCityMenu(saved.continent, saved.country);
-      if (saved.city && Array.isArray(saved.stations) && saved.stations.length > 0) {
-        /* Restore cached station list */
-        fetchCityName = saved.city;
-        fetchCountryName = saved.country;
-        stations = saved.stations;
-        openStationMenu();
-      }
-    }
-  }
-};
-
-globalThis.tick = function () {
-  tickCounter = (tickCounter + 1) % 6;
-  if (tickCounter === 0) refreshState();
-
-  /* Async fetch state machine */
-  if (fetchPhase === 'draw_loading') {
-    /* This tick: draw the loading message, next tick: do the blocking fetch */
-    clear_screen();
-    drawStackMenu({
-      stack: menuStack,
-      state: menuState,
-      footer: 'Loading ' + fetchCityName + '...'
-    });
-    host_flush_display();
-    fetchPhase = 'searching';
-    return;
-  }
-
-  if (fetchPhase === 'searching') {
-    /* Blocking fetch happens here — UI already shows "Loading..." */
-    doFetchStations();
-    if (fetchPhase === 'done') {
-      if (randomMode) {
-        /* Pick a random station and play it immediately */
-        const st = stations[Math.floor(Math.random() * stations.length)];
-        playStation(st);
-        randomMode = false;
-      } else {
-        openStationMenu();
-      }
-      fetchPhase = 'idle';
-    } else {
-      if (randomMode) {
-        /* Fetch failed — try another random city next tick */
-        randomMode = false;
-        statusMessage = 'No stations, try again';
-      }
-      fetchPhase = 'idle';
-    }
-    needsRedraw = true;
-    return;
-  }
-
-  /* Spinner animation */
-  if (currentActivityLabel()) {
-    spinnerTick = (spinnerTick + 1) % 3;
-    if (spinnerTick === 0) {
-      spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
-      needsRedraw = true;
-    }
-  }
-
-  if (needsRedraw) {
-    clear_screen();
-    drawStackMenu({
-      stack: menuStack,
-      state: menuState,
-      footer: currentFooter()
-    });
-    needsRedraw = false;
-  }
-};
-
-globalThis.onMidiMessageInternal = function (data) {
-  const status = data[0] & 0xF0;
-  const cc = data[1];
-  const val = data[2];
-
-  /* Knob touch: stage a pending action */
-  if (status === MidiNoteOn && val > 0) {
-    if (cc === MoveKnob1Touch) {
-      setPendingKnobAction(MoveKnob1, 'play_pause',
-        streamStatus === 'paused' ? 'Resume?' : 'Pause?');
+function pollFetch(state, nowMs) {
+  const f = state.fetch;
+  if (!f) return;
+  const fail = (msg) => { reap(f.pid); state.fetch = null; state.message = msg; };
+  if (exists(f.path)) {
+    reap(f.pid);
+    let data = null;
+    try { data = JSON.parse(readText(f.path) || ''); } catch (e) { data = null; }
+    if (f.phase === 'search') {
+      const placeId = placeIdFrom(data);
+      if (!placeId) { fail('City not found'); return; }
+      f.phase = 'channels';
+      f.path = CACHE_DIR + '/channels.json';
+      f.pid = httpGetToFile(channelsUrl(placeId), f.path);
+      f.startedMs = nowMs;
       return;
     }
-    if (cc === MoveKnob7Touch) {
-      setPendingKnobAction(MoveKnob7, 'stop', 'Stop stream?');
+    const stations = stationsFrom(data);
+    if (!stations.length) { fail('No stations found'); return; }
+    state.fetch = null;
+    state.stack.push(stationsLevel(f.city, stations));
+    saveNav(state);
+    return;
+  }
+  if (exists(f.path + '.err')) { fail('Network error'); return; }
+  if (nowMs - f.startedMs > FETCH_TIMEOUT_MS) fail('Timed out');
+}
+
+/* ── drawing ──────────────────────────────────────────────────────── */
+
+function drawBrackets(ctx) {
+  const x = FRAME_X, y = FRAME_Y, w = FRAME_W, h = FRAME_H;
+  for (let i = 0; i < ARM; i++) {
+    ctx.fillRect(x + i, y, 1, 1, 1);
+    ctx.fillRect(x + w - 1 - i, y, 1, 1, 1);
+    ctx.fillRect(x + i, y + h - 1, 1, 1, 1);
+    ctx.fillRect(x + w - 1 - i, y + h - 1, 1, 1, 1);
+  }
+  for (let i = 0; i < ARM - 1; i++) {
+    ctx.fillRect(x, y + i, 1, 1, 1);
+    ctx.fillRect(x + w - 1, y + i, 1, 1, 1);
+    ctx.fillRect(x, y + h - 1 - i, 1, 1, 1);
+    ctx.fillRect(x + w - 1, y + h - 1 - i, 1, 1, 1);
+  }
+}
+
+/* The bottom line: what is loading, what went wrong, or what is playing --
+ * the state as a one-glyph prefix, so a long station name cannot push it off. */
+function statusLine(state, values, nowMs) {
+  const spin = SPINNER[Math.floor(nowMs / 150) % SPINNER.length];
+  if (state.fetch) return spin + ' Loading ' + state.fetch.city;
+  if (state.message) return state.message;
+  const name = String(values.station_name || state.stationName || '').trim();
+  const status = values.stream_status || '';
+  if (!name || status === 'stopped') return 'Nothing playing';
+  if (status === 'buffering' || status === 'loading') return spin + ' ' + name;
+  if (status === 'paused') return '|| ' + name;
+  if (status === 'eof') return 'Ended: ' + name;
+  return '> ' + name;
+}
+
+/*
+ * ONE picture for both states, so entering is visible.
+ *
+ * The click that enters this door is the host's and nothing reports it, so
+ * "entered" is only known at the NEXT gesture. A page that drew something else
+ * until then would look like the click did nothing. So un-entered and entered
+ * are the same list -- the level's title, three rows, a scrollbar, and what is
+ * playing on the bottom line -- and differ the way the host's own list doors
+ * do: brackets un-entered, the row highlight entered.
+ */
+function drawPageBody(ctx, state, values, nowMs) {
+  const lvl = cur(state);
+  ctx.print(LIST_X, 0, fit(lvl.title, 110), 1);
+  ctx.fillRect(LIST_X, 8, 110, 1, 1);
+  for (let i = 0; i < VISIBLE_ROWS; i++) {
+    const r = lvl.top + i;
+    if (r >= lvl.rows.length) break;
+    const y = 10 + i * ROW_H;
+    const on = state.entered && r === lvl.cursor;
+    if (on) ctx.fillRect(LIST_X - 3, y - HI_OFF, 112, ROW_H, 1);
+    ctx.print(LIST_X, y, fit(lvl.rows[r].label, 104), on ? 0 : 1);
+  }
+  if (lvl.rows.length > VISIBLE_ROWS) {
+    const trackH = VISIBLE_ROWS * ROW_H;
+    const thumbH = Math.max(3, Math.floor(trackH * VISIBLE_ROWS / lvl.rows.length));
+    const span = lvl.rows.length - VISIBLE_ROWS;
+    const thumbY = 9 + Math.floor((trackH - thumbH) * lvl.top / span);
+    ctx.fillRect(120, thumbY, 1, thumbH, 1);
+  }
+  ctx.fillRect(LIST_X, 36, 110, 1, 1);
+  ctx.print(LIST_X, 37, fit(statusLine(state, values, nowMs), 110), 1);
+  if (!state.entered) drawBrackets(ctx);
+}
+
+/* ── the overlay ──────────────────────────────────────────────────── */
+
+globalThis.canvas_overlay = {
+  onMidi(ctx, msg) {
+    const d = msg && msg.data;
+    if (!d || d.length < 3 || (d[0] & 0xF0) !== 0xB0) return;
+    const state = stateOf(ctx.state);
+    /* Only an ENTERED door is handed gestures: this one proves it. */
+    const wasEntered = state.entered;
+    state.entered = true;
+    state.message = '';
+    if (d[1] === CC_JOG) {
+      const v = d[2];
+      const delta = v === 0 ? 0 : (v <= 63 ? v : -(128 - v));
+      if (delta && wasEntered) move(cur(state), delta);
       return;
     }
-  }
+    if (d[1] === CC_CLICK && d[2] > 0 && wasEntered) activate(ctx, state);
+    /* A hook call proves the page is on screen. [Random] blocks for a second
+     * or more, and without this the next draw reads the gap as "you left" and
+     * draws the page un-entered while the host still has it entered. */
+    state.lastDraw = Date.now();
+  },
 
-  if (status !== 0xB0) return;
-
-  /* Knob turn: confirm/cancel pending action */
-  if (cc === MoveKnob1 || cc === MoveKnob7) {
-    const delta = decodeDelta(val);
-    if (delta > 0 && pendingKnobAction && pendingKnobAction.cc === cc) {
-      runKnobAction(pendingKnobAction.action);
-      pendingKnobAction = null;
-      needsRedraw = true;
-    } else if (delta < 0 && pendingKnobAction && pendingKnobAction.cc === cc) {
-      pendingKnobAction = null;
-      statusMessage = 'Cancelled';
-      needsRedraw = true;
+  /* true = "I went up a level, keep me here"; anything else = leave the door. */
+  handleBack(ctx) {
+    const state = stateOf(ctx.state);
+    if (state.fetch) { reap(state.fetch.pid); state.fetch = null; return true; }
+    if (state.stack.length > 1) {
+      state.stack.pop();
+      state.message = '';
+      saveNav(state);
+      return true;
     }
-    return;
-  }
+    state.entered = false;
+    return false;
+  },
 
-  if (isCapacitiveTouchMessage(data)) return;
-
-  if (cc === MoveShift) {
-    shiftHeld = val > 0;
-    return;
-  }
-
-  /* Menu navigation */
-  const current = menuStack.current();
-  if (!current) return;
-
-  const result = handleMenuInput({
-    cc,
-    value: val,
-    items: current.items,
-    state: menuState,
-    stack: menuStack,
-    onBack: () => { saveNavState('', '', '', []); host_return_to_menu(); },
-    shiftHeld
-  });
-
-  if (result.needsRedraw) {
-    /* Save selected index for restoration when popping */
-    if (current) current.selectedIndex = menuState.selectedIndex;
-    needsRedraw = true;
-  }
-};
-
-globalThis.onMidiMessageExternal = function () {};
-
-/* Expose chain_ui for shadow component loader compatibility. */
-globalThis.chain_ui = {
-  init: globalThis.init,
-  tick: globalThis.tick,
-  onMidiMessageInternal: globalThis.onMidiMessageInternal,
-  onMidiMessageExternal: globalThis.onMidiMessageExternal
+  drawPage(ctx, info) {
+    const state = stateOf(info.state || {});
+    const nowMs = typeof info.nowMs === 'number' ? info.nowMs : Date.now();
+    if (state.lastDraw < 0 || nowMs - state.lastDraw > AWAY_MS) state.entered = false;
+    state.lastDraw = nowMs;
+    pollFetch(state, nowMs);
+    drawPageBody(ctx, state, info.values || {}, nowMs);
+  },
 };

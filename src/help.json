@@ -23,9 +23,13 @@
         {
           "title": "Navigation",
           "lines": [
+            "Page 1, Browse:",
+            "Click to enter the",
+            "station browser.",
             "Jog: scroll list",
             "Jog Click: select",
-            "Back: go up one level",
+            "Back: up one level,",
+            "then out to pages.",
             "",
             "Browse hierarchy:",
             " Continent",
@@ -34,9 +38,9 @@
             "    > Station",
             "",
             "[Random], first on",
-            "the continent list,",
-            "picks a random city",
-            "and plays a random",
+            "the list, picks a",
+            "random city and",
+            "plays a random",
             "station from it.",
             "",
             "~970 cities indexed.",
@@ -48,19 +52,17 @@
         {
           "title": "Playback",
           "lines": [
-            "Knob 1: Play/Pause",
-            " Touch then turn R",
-            " to confirm.",
+            "Page 2, Controls:",
+            "Knob 1: Gain",
+            " (0-2x output)",
+            "Knob 2: Play/Pause",
+            "Knob 3: Stop",
+            " Click to fire.",
             "",
-            "Knob 7: Stop",
-            " Touch then turn R",
-            " to confirm.",
-            "",
-            "Turn L on either",
-            "knob to cancel.",
-            "",
-            "Gain: 0-2x output",
-            "level (via menu)."
+            "The bottom line of",
+            "the Browse page",
+            "shows what is",
+            "playing."
           ]
         }
       ]

@@ -1,0 +1,45 @@
+[
+  {
+    "key": "browse",
+    "name": "Browse",
+    "type": "canvas",
+    "canvas_script": "browser.js",
+    "as_page": true,
+    "enterable": true,
+    "show_value": false,
+    "extra_keys": [
+      "station_name",
+      "stream_status"
+    ]
+  },
+  {
+    "key": "gain",
+    "name": "Gain",
+    "type": "float",
+    "min": 0.0,
+    "max": 2.0,
+    "default": 1.0,
+    "step": 0.05
+  },
+  {
+    "key": "play_pause_step",
+    "short_name": "Pause",
+    "name": "Play/Pause",
+    "type": "enum",
+    "options": [
+      "idle",
+      "trigger"
+    ],
+    "default": "idle"
+  },
+  {
+    "key": "stop_step",
+    "name": "Stop",
+    "type": "enum",
+    "options": [
+      "idle",
+      "trigger"
+    ],
+    "default": "idle"
+  }
+]
