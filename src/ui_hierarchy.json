@@ -1,0 +1,18 @@
+{
+  "levels": {
+    "root": {
+      "name": "Radio Garden",
+      "knobs": [
+        "gain",
+        "play_pause_step",
+        "stop_step"
+      ],
+      "params": [
+        "browse",
+        "gain",
+        "play_pause_step",
+        "stop_step"
+      ]
+    }
+  }
+}

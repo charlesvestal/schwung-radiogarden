@@ -6,15 +6,15 @@ Browse and stream live radio stations from around the world on Ableton Move, pow
 
 - **200 cities** across 6 continents, organized by continent and country
 - Live radio streaming via ffmpeg
-- Play/pause and stop controls via knobs
-- Works standalone or in Signal Chain
+- Browse page (first page): continent → country → city → station
+- Knobs: Gain, Play/Pause, Stop — on every page and in the chain editor
 
 ## Usage
 
-1. Navigate: **Continent → Country → City**
-2. Wait for stations to load from Radio Garden
-3. Select a station to start streaming
-4. **Knob 1**: Play/Pause | **Knob 7**: Stop
+1. Open Radio Garden in a slot: the first page is **Browse**. Click to enter it.
+2. Navigate **Continent → Country → City**; stations load in the background.
+3. Select a station to start streaming. Back goes up a level, and out at the top.
+4. Knobs 1–3: Gain, Play/Pause, Stop, on every page. The header shows what is playing.
 
 ## Building
 
@@ -36,7 +36,7 @@ Or install via the **Module Store** on your Move.
 
 ## Requirements
 
-- Move Everything host v0.3.0+
+- Schwung host with `page_first` canvas pages (next release); on 1.5.0–1.6.x the Browse page is page 2
 - Internet connection on Move (for API calls and radio streams)
 
 ## How It Works
