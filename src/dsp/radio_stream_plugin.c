@@ -472,14 +472,22 @@ static void pump_pipe(radio_instance_t *inst) {
 
 /* ── trigger/debounce helpers ─────────────────────────────────────── */
 
+/*
+ * Is this write a press?
+ *
+ * The host's trigger writes option 1 of ["idle","trigger"] -- as the NAME
+ * "trigger", or as the INDEX "1", depending on the wire format it learned from
+ * get_param. Every press writes the SAME value. This used to read a number as
+ * a counter that fires only when it goes UP, so the first "1" fired and every
+ * later "1" was dropped: Stop (and Play/Pause) worked once per load and then
+ * did nothing. A non-zero index is a press; 0 is idle.
+ */
 static bool parse_trigger_value(const char *val, int *step) {
-    int prev;
     if (!val || !step) return false;
     if (strcmp(val, "trigger") == 0 || strcmp(val, "on") == 0) return true;
     if (strcmp(val, "idle") == 0 || strcmp(val, "off") == 0) return false;
-    prev = *step;
     *step = atoi(val);
-    return *step > prev;
+    return *step != 0;
 }
 
 static bool allow_trigger(uint64_t *last_ms) {
